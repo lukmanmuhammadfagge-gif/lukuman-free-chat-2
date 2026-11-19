@@ -1,0 +1,261 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailHash(hash) {
+      return hash is string && hash.size() == 64 && hash.matches('^[a-f0-9]{64}$');
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'photoUrl', 'preferredLanguage', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoUrl', 'preferredLanguage', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.photoUrl is string && data.photoUrl.size() <= 500
+        && data.preferredLanguage is string && data.preferredLanguage in ['ha', 'en']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDirectoryUser(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'displayNameLower', 'photoUrl', 'emailHash', 'searchable', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'displayNameLower', 'photoUrl', 'emailHash', 'searchable', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.displayNameLower is string && data.displayNameLower.size() >= 1 && data.displayNameLower.size() <= 100
+        && data.photoUrl is string && data.photoUrl.size() <= 500
+        && isValidEmailHash(data.emailHash)
+        && data.searchable is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidEmailLookup(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'photoUrl', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'photoUrl', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.photoUrl is string && data.photoUrl.size() <= 500
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidParticipantPair(pair, chatId) {
+      return pair is list
+        && pair.size() == 2
+        && pair[0] is string && isValidId(pair[0])
+        && pair[1] is string && isValidId(pair[1])
+        && pair[0] < pair[1]
+        && chatId == (pair[0] + '_' + pair[1]);
+    }
+
+    function isValidChatThread(data, chatId) {
+      return data.keys().hasAll([
+          'chatId', 'participantIds', 'participantNames', 'participantPhotos',
+          'lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'chatId', 'participantIds', 'participantNames', 'participantPhotos',
+          'lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.chatId)
+        && data.chatId == chatId
+        && isValidParticipantPair(data.participantIds, chatId)
+        && data.participantNames is map
+        && data.participantNames.keys().hasAll(data.participantIds)
+        && data.participantNames.keys().hasOnly(data.participantIds)
+        && data.participantNames[data.participantIds[0]] is string
+        && data.participantNames[data.participantIds[0]].size() >= 1
+        && data.participantNames[data.participantIds[0]].size() <= 100
+        && data.participantNames[data.participantIds[1]] is string
+        && data.participantNames[data.participantIds[1]].size() >= 1
+        && data.participantNames[data.participantIds[1]].size() <= 100
+        && data.participantPhotos is map
+        && data.participantPhotos.keys().hasAll(data.participantIds)
+        && data.participantPhotos.keys().hasOnly(data.participantIds)
+        && data.participantPhotos[data.participantIds[0]] is string
+        && data.participantPhotos[data.participantIds[0]].size() <= 500
+        && data.participantPhotos[data.participantIds[1]] is string
+        && data.participantPhotos[data.participantIds[1]].size() <= 500
+        && data.lastMessageText is string && data.lastMessageText.size() <= 2000
+        && data.lastMessageSenderId is string && data.lastMessageSenderId.size() <= 128
+        && data.lastMessageAt is timestamp
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessage(data, chatId, messageId) {
+      return data.keys().hasAll(['id', 'chatId', 'senderId', 'participantIds', 'text', 'createdAt'])
+        && data.keys().hasOnly(['id', 'chatId', 'senderId', 'participantIds', 'text', 'createdAt'])
+        && isValidId(data.id) && data.id == messageId
+        && isValidId(data.chatId) && data.chatId == chatId
+        && isValidId(data.senderId) && data.senderId == request.auth.uid
+        && isValidParticipantPair(data.participantIds, chatId)
+        && request.auth.uid in data.participantIds
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 2000
+        && data.createdAt is timestamp;
+    }
+
+    // --- /users/{userId} (Strict Owner-Only PII) ---
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'preferredLanguage', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // --- /user_directory/{userId} (Public Non-PII Searchable Directory) ---
+    match /user_directory/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && existing().searchable == true;
+      allow list: if isSignedIn() && existing().searchable == true;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidDirectoryUser(incoming(), userId)
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidDirectoryUser(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'displayNameLower', 'photoUrl', 'emailHash', 'searchable', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // --- /email_lookup/{emailHash} (Exact Email Hash Lookup, No Listing) ---
+    match /email_lookup/{emailHash} {
+      allow get: if isSignedIn() && isValidEmailHash(emailHash);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidEmailHash(emailHash)
+        && isValidEmailLookup(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidEmailHash(emailHash)
+        && existing().uid == request.auth.uid
+        && isValidEmailLookup(incoming())
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // --- /chats/{chatId} (Strict 1:1 Participant-Only Chats) ---
+    match /chats/{chatId} {
+      allow get: if isSignedIn()
+        && isValidId(chatId)
+        && request.auth.uid in existing().participantIds;
+      allow list: if isSignedIn()
+        && request.auth.uid in existing().participantIds;
+      allow create: if isVerifiedUser()
+        && isValidId(chatId)
+        && isValidChatThread(incoming(), chatId)
+        && request.auth.uid in incoming().participantIds
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().lastMessageAt == request.time
+        && exists(/databases/$(database)/documents/user_directory/$(incoming().participantIds[0]))
+        && exists(/databases/$(database)/documents/user_directory/$(incoming().participantIds[1]));
+      allow update: if isVerifiedUser()
+        && isValidId(chatId)
+        && isValidChatThread(incoming(), chatId)
+        && request.auth.uid in existing().participantIds
+        && incoming().chatId == existing().chatId
+        && incoming().participantIds == existing().participantIds
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: SendMessageSummaryUpdate
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'updatedAt'])
+            && incoming().lastMessageSenderId == request.auth.uid
+            && incoming().lastMessageAt == request.time
+          )
+          ||
+          // Action: SyncParticipantProfile (can only modify caller's own entry)
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['participantNames', 'participantPhotos', 'updatedAt'])
+            && (
+              (
+                request.auth.uid == existing().participantIds[0]
+                && incoming().participantNames[existing().participantIds[1]] == existing().participantNames[existing().participantIds[1]]
+                && incoming().participantPhotos[existing().participantIds[1]] == existing().participantPhotos[existing().participantIds[1]]
+              )
+              ||
+              (
+                request.auth.uid == existing().participantIds[1]
+                && incoming().participantNames[existing().participantIds[0]] == existing().participantNames[existing().participantIds[0]]
+                && incoming().participantPhotos[existing().participantIds[0]] == existing().participantPhotos[existing().participantIds[0]]
+              )
+            )
+          )
+        );
+      allow delete: if false;
+
+      // --- /chats/{chatId}/messages/{messageId} ---
+      match /messages/{messageId} {
+        allow get: if isSignedIn()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && request.auth.uid in existing().participantIds;
+        allow list: if isSignedIn()
+          && request.auth.uid in existing().participantIds;
+        allow create: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && isValidChatMessage(incoming(), chatId, messageId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/chats/$(chatId))
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantIds
+          && incoming().participantIds == get(/databases/$(database)/documents/chats/$(chatId)).data.participantIds;
+        allow update, delete: if false;
+      }
+    }
+  }
+}

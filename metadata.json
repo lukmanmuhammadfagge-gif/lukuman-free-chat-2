@@ -1,0 +1,6 @@
+{
+  "name": "Lukuman Free Chat",
+  "description": "Original deep-blue bilingual (Hausa & English) Android chat app (Kotlin, Jetpack Compose) and live Firebase companion built by Lukuman Muhammad Abubakar Fagge.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
