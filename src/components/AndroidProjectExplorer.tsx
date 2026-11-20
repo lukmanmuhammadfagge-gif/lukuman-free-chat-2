@@ -80,6 +80,16 @@ export const AndroidProjectExplorer: React.FC<AndroidProjectExplorerProps> = ({ 
         // Optional binary fallback
       }
 
+      try {
+        const ksRes = await fetch('/lukuman-debug.keystore');
+        if (ksRes.ok) {
+          const ksBuf = await ksRes.arrayBuffer();
+          zip.file('lukuman-debug.keystore', ksBuf);
+        }
+      } catch {
+        // Optional binary fallback
+      }
+
       const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

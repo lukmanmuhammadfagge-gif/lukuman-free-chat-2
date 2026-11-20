@@ -16,7 +16,8 @@ data class UserProfile(
     val displayName: String = "",
     val email: String = "",
     val photoUrl: String = "",
-    val preferredLanguage: AppLanguage = AppLanguage.HAUSA
+    val preferredLanguage: AppLanguage = AppLanguage.HAUSA,
+    val phoneHash: String = ""
 )
 
 data class DirectoryUser(
@@ -25,6 +26,18 @@ data class DirectoryUser(
     val photoUrl: String = ""
 )
 
+enum class MessageStatus(val value: String) {
+    SENT("sent"),
+    DELIVERED("delivered"),
+    READ("read");
+
+    companion object {
+        fun fromValue(raw: String?): MessageStatus {
+            return entries.firstOrNull { it.value == raw } ?: SENT
+        }
+    }
+}
+
 data class ChatThread(
     val chatId: String = "",
     val participantIds: List<String> = emptyList(),
@@ -32,7 +45,9 @@ data class ChatThread(
     val participantPhotos: Map<String, String> = emptyMap(),
     val lastMessageText: String = "",
     val lastMessageSenderId: String = "",
-    val lastMessageAtMillis: Long = 0L
+    val lastMessageAtMillis: Long = 0L,
+    val unreadCounts: Map<String, Int> = emptyMap(),
+    val typingUsers: Map<String, Boolean> = emptyMap()
 ) {
     fun peerUid(currentUid: String): String {
         return participantIds.firstOrNull { it != currentUid } ?: currentUid
@@ -47,7 +62,18 @@ data class ChatThread(
         val peer = peerUid(currentUid)
         return participantPhotos[peer].orEmpty()
     }
+
+    fun unreadCount(currentUid: String): Int {
+        return (unreadCounts[currentUid] ?: 0).coerceAtLeast(0)
+    }
+
+    fun isPeerTyping(currentUid: String): Boolean {
+        val peer = peerUid(currentUid)
+        return typingUsers[peer] == true
+    }
 }
+
+const val PHOTO_MESSAGE_MARKER = "__IMAGE__"
 
 data class ChatMessage(
     val id: String = "",
@@ -55,5 +81,9 @@ data class ChatMessage(
     val senderId: String = "",
     val participantIds: List<String> = emptyList(),
     val text: String = "",
-    val createdAtMillis: Long = 0L
+    val imageBase64: String = "",
+    val status: MessageStatus = MessageStatus.SENT,
+    val createdAtMillis: Long = 0L,
+    val deliveredAtMillis: Long = 0L,
+    val readAtMillis: Long = 0L
 )

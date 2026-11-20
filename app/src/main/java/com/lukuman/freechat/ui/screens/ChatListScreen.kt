@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -199,12 +200,18 @@ private fun ChatThreadRow(
 ) {
     val peerName = thread.peerName(currentUid)
     val peerPhoto = thread.peerPhoto(currentUid)
+    val unreadCount = thread.unreadCount(currentUid)
+    val basePreview = when (thread.lastMessageText) {
+        "" -> strings.newChatPlaceholder
+        com.lukuman.freechat.data.model.PHOTO_MESSAGE_MARKER -> strings.photoLabel
+        else -> thread.lastMessageText
+    }
     val preview = if (thread.lastMessageText.isBlank()) {
-        strings.newChatPlaceholder
+        basePreview
     } else if (thread.lastMessageSenderId == currentUid) {
-        "${strings.youPrefix}${thread.lastMessageText}"
+        "${strings.youPrefix}$basePreview"
     } else {
-        thread.lastMessageText
+        basePreview
     }
 
     Row(
@@ -231,6 +238,7 @@ private fun ChatThreadRow(
                 Text(
                     text = peerName,
                     style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (unreadCount > 0) FontWeight.Bold else FontWeight.Medium,
                     color = DeepBluePalette.IceInk,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -246,13 +254,38 @@ private fun ChatThreadRow(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            Text(
-                text = preview,
-                style = MaterialTheme.typography.bodyMedium,
-                color = DeepBluePalette.SteelMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (unreadCount > 0) DeepBluePalette.IceInk else DeepBluePalette.SteelMuted,
+                    fontWeight = if (unreadCount > 0) FontWeight.Medium else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (unreadCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = 22.dp, minHeight = 22.dp)
+                            .background(DeepBluePalette.SapphireSky, RoundedCornerShape(11.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = DeepBluePalette.MidnightNavy
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -2,7 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import {
   ArrowLeft,
+  Check,
+  CheckCheck,
   Code2,
+  Image as ImageIcon,
   LogOut,
   MessageSquare,
   Search,
@@ -15,17 +18,24 @@ import { AppLanguage, STRINGS } from './i18n';
 import {
   ChatMessage,
   ChatThread,
+  clearUnreadCount,
   DirectoryUser,
   loadUserProfile,
+  markChatMessagesDelivered,
+  markMessagesAsRead,
   openOrCreateChat,
+  PHOTO_MESSAGE_MARKER,
+  saveUserPhoneHash,
   searchUsers,
   sendMessage,
+  setTypingStatus,
   subscribeChatMessages,
   subscribeUserChats,
   syncUserProfile,
   updatePreferredLanguage,
   UserProfile,
 } from './services/chatService';
+import { compressImageFileToBase64 } from './utils/imageCompressor';
 import { BrandMark } from './components/BrandMark';
 import { UserAvatar } from './components/UserAvatar';
 import { AndroidProjectExplorer } from './components/AndroidProjectExplorer';
@@ -45,6 +55,10 @@ export function App() {
   const [activePeer, setActivePeer] = useState<{ name: string; photoUrl: string } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
+  const [stagedImageBase64, setStagedImageBase64] = useState<string | null>(null);
+  const [compressingImage, setCompressingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
 
   const [showFindUsers, setShowFindUsers] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -53,13 +67,41 @@ export function App() {
   const [hasSearched, setHasSearched] = useState(false);
 
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [phoneInput, setPhoneInput] = useState('');
+  const [savingPhone, setSavingPhone] = useState(false);
+  const [phoneFeedback, setPhoneFeedback] = useState<{ text: string; isError: boolean } | null>(
+    null
+  );
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const activeChatIdRef = useRef<string | null>(null);
+  const deliveredSyncedAtRef = useRef<Record<string, number>>({});
+  const typingTimeoutRef = useRef<number | null>(null);
+  const isLocallyTypingRef = useRef(false);
+  const typingChatIdRef = useRef<string | null>(null);
   const strings = STRINGS[language];
+
+  activeChatIdRef.current = activeChatId;
+
+  const stopTypingNow = (clearRemote = true) => {
+    if (typingTimeoutRef.current !== null) {
+      window.clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    const prevTypingChatId = typingChatIdRef.current;
+    const wasTyping = isLocallyTypingRef.current;
+    isLocallyTypingRef.current = false;
+    typingChatIdRef.current = null;
+    if (clearRemote && wasTyping && prevTypingChatId && currentUser) {
+      void setTypingStatus(prevTypingChatId, currentUser.uid, false);
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
+        deliveredSyncedAtRef.current = {};
         setCurrentUser(null);
         setChats([]);
         setActiveChatId(null);
@@ -87,8 +129,23 @@ export function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const unsubscribe = subscribeUserChats(currentUser.uid, (nextChats) => {
+    const uid = currentUser.uid;
+    const unsubscribe = subscribeUserChats(uid, (nextChats) => {
       setChats(nextChats);
+      for (const thread of nextChats) {
+        if (thread.chatId === activeChatIdRef.current) {
+          if ((thread.unreadCounts[uid] || 0) > 0) {
+            void clearUnreadCount(thread.chatId, uid);
+          }
+        } else if (
+          thread.lastMessageSenderId &&
+          thread.lastMessageSenderId !== uid &&
+          thread.lastMessageAtMillis > (deliveredSyncedAtRef.current[thread.chatId] ?? -1)
+        ) {
+          deliveredSyncedAtRef.current[thread.chatId] = thread.lastMessageAtMillis;
+          void markChatMessagesDelivered(thread.chatId, uid);
+        }
+      }
     });
     return () => unsubscribe();
   }, [currentUser?.uid]);
@@ -98,11 +155,26 @@ export function App() {
       setMessages([]);
       return;
     }
-    const unsubscribe = subscribeChatMessages(activeChatId, currentUser.uid, (nextMessages) => {
+    const uid = currentUser.uid;
+    const unsubscribe = subscribeChatMessages(activeChatId, uid, (nextMessages) => {
       setMessages(nextMessages);
+      const hasUnreadIncoming = nextMessages.some(
+        (msg) => msg.senderId !== uid && msg.status !== 'read'
+      );
+      if (hasUnreadIncoming) {
+        void markMessagesAsRead(activeChatId, uid, nextMessages);
+      }
     });
     return () => unsubscribe();
   }, [currentUser?.uid, activeChatId]);
+
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current !== null) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -132,6 +204,7 @@ export function App() {
   };
 
   const handleSignOut = async () => {
+    stopTypingNow(true);
     setShowProfileModal(false);
     await signOut(auth);
   };
@@ -148,18 +221,59 @@ export function App() {
     }
   };
 
-  const handleOpenFindUsers = async () => {
+  useEffect(() => {
+    if (!showFindUsers || !currentUser) return;
+    const timer = window.setTimeout(() => {
+      void handleRunSearch(searchQuery);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery, showFindUsers, currentUser?.uid]);
+
+  const handleOpenFindUsers = () => {
+    setSearchQuery('');
     setShowFindUsers(true);
-    await handleRunSearch('');
+  };
+
+  const handleSavePhone = async (rawValue: string) => {
+    if (!currentUser) return;
+    setSavingPhone(true);
+    setPhoneFeedback(null);
+    try {
+      const nextHash = await saveUserPhoneHash(
+        currentUser,
+        rawValue,
+        strings.phoneInvalidError,
+        strings.phoneAlreadyTakenError
+      );
+      setCurrentUser({ ...currentUser, phoneHash: nextHash });
+      if (!nextHash) {
+        setPhoneInput('');
+        setPhoneFeedback({ text: strings.phoneRemovedStatus, isError: false });
+      } else {
+        setPhoneFeedback({ text: strings.phoneSavedStatus, isError: false });
+      }
+    } catch (error) {
+      setPhoneFeedback({
+        text: error instanceof Error ? error.message : strings.phoneInvalidError,
+        isError: true,
+      });
+    } finally {
+      setSavingPhone(false);
+    }
   };
 
   const handleStartChat = async (user: DirectoryUser) => {
     if (!currentUser) return;
+    stopTypingNow(true);
     const chatId = await openOrCreateChat(currentUser, user);
     setActivePeer({ name: user.displayName, photoUrl: user.photoUrl });
     setActiveChatId(chatId);
     setShowFindUsers(false);
     setMode('chat');
+    const existing = chats.find((c) => c.chatId === chatId);
+    if (existing && (existing.unreadCounts[currentUser.uid] || 0) > 0) {
+      void clearUnreadCount(chatId, currentUser.uid);
+    }
   };
 
   const activeThread = useMemo(
@@ -168,26 +282,81 @@ export function App() {
   );
 
   const resolvedPeer = useMemo(() => {
-    if (!currentUser) return { name: '', photoUrl: '' };
+    if (!currentUser) return { uid: '', name: '', photoUrl: '' };
     if (activeThread) {
       const peerId =
         activeThread.participantIds.find((id) => id !== currentUser.uid) || currentUser.uid;
       return {
+        uid: peerId,
         name: activeThread.participantNames[peerId] || activePeer?.name || 'User',
         photoUrl: activeThread.participantPhotos[peerId] || activePeer?.photoUrl || '',
       };
     }
-    return activePeer || { name: '', photoUrl: '' };
+    return {
+      uid: '',
+      name: activePeer?.name || '',
+      photoUrl: activePeer?.photoUrl || '',
+    };
   }, [activeThread, activePeer, currentUser]);
+
+  const isPeerTyping = Boolean(
+    activeThread && resolvedPeer.uid && activeThread.typingUsers[resolvedPeer.uid]
+  );
+
+  const handleDraftChange = (nextValue: string) => {
+    setDraft(nextValue);
+    if (!currentUser || !activeChatId) return;
+
+    if (nextValue.trim().length === 0) {
+      stopTypingNow(true);
+      return;
+    }
+
+    if (!isLocallyTypingRef.current || typingChatIdRef.current !== activeChatId) {
+      if (isLocallyTypingRef.current && typingChatIdRef.current) {
+        void setTypingStatus(typingChatIdRef.current, currentUser.uid, false);
+      }
+      isLocallyTypingRef.current = true;
+      typingChatIdRef.current = activeChatId;
+      void setTypingStatus(activeChatId, currentUser.uid, true);
+    }
+
+    if (typingTimeoutRef.current !== null) {
+      window.clearTimeout(typingTimeoutRef.current);
+    }
+    typingTimeoutRef.current = window.setTimeout(() => {
+      stopTypingNow(true);
+    }, 3000);
+  };
+
+  const handleImageFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setCompressingImage(true);
+    setImageError(null);
+    try {
+      const base64 = await compressImageFileToBase64(file);
+      setStagedImageBase64(base64);
+    } catch {
+      setImageError(strings.imageErrorLabel);
+    } finally {
+      setCompressingImage(false);
+    }
+  };
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser || !activeChatId) return;
+    if (!currentUser || !activeChatId || compressingImage) return;
     const clean = draft.trim();
-    if (!clean) return;
+    const imagePayload = stagedImageBase64 || '';
+    if (!clean && !imagePayload) return;
     const participants = activeThread?.participantIds || activeChatId.split('_');
+    stopTypingNow(false);
     setDraft('');
-    await sendMessage(activeChatId, currentUser.uid, participants, clean);
+    setStagedImageBase64(null);
+    setImageError(null);
+    await sendMessage(activeChatId, currentUser.uid, participants, clean, imagePayload);
   };
 
   const formatTime = (millis: number): string => {
@@ -340,7 +509,10 @@ export function App() {
 
         <button
           type="button"
-          onClick={() => setShowProfileModal(true)}
+          onClick={() => {
+            setPhoneFeedback(null);
+            setShowProfileModal(true);
+          }}
           className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-[#122650] transition-colors shrink-0 cursor-pointer"
         >
           <UserAvatar
@@ -469,19 +641,33 @@ export function App() {
                     const peerName = thread.participantNames[peerId] || 'User';
                     const peerPhoto = thread.participantPhotos[peerId] || '';
                     const isSelected = thread.chatId === activeChatId;
+                    const basePreview =
+                      !thread.lastMessageText
+                        ? strings.newChatPlaceholder
+                        : thread.lastMessageText === PHOTO_MESSAGE_MARKER
+                        ? strings.photoLabel
+                        : thread.lastMessageText;
                     const preview = !thread.lastMessageText
-                      ? strings.newChatPlaceholder
+                      ? basePreview
                       : thread.lastMessageSenderId === currentUser.uid
-                      ? `${strings.youPrefix}${thread.lastMessageText}`
-                      : thread.lastMessageText;
+                      ? `${strings.youPrefix}${basePreview}`
+                      : basePreview;
+
+                    const unreadCount = thread.unreadCounts[currentUser.uid] || 0;
 
                     return (
                       <button
                         key={thread.chatId}
                         type="button"
                         onClick={() => {
+                          if (activeChatId && activeChatId !== thread.chatId) {
+                            stopTypingNow(true);
+                          }
                           setActivePeer({ name: peerName, photoUrl: peerPhoto });
                           setActiveChatId(thread.chatId);
+                          if (unreadCount > 0) {
+                            void clearUnreadCount(thread.chatId, currentUser.uid);
+                          }
                         }}
                         className={`w-full px-4 py-3.5 flex items-center gap-3 text-left transition-colors cursor-pointer ${
                           isSelected ? 'bg-[#173166]' : 'hover:bg-[#122650]'
@@ -497,7 +683,22 @@ export function App() {
                               {formatTime(thread.lastMessageAtMillis)}
                             </span>
                           </div>
-                          <p className="text-xs text-[#96ACD0] truncate mt-0.5">{preview}</p>
+                          <div className="flex items-center justify-between gap-2 mt-0.5">
+                            <p
+                              className={`text-xs truncate ${
+                                unreadCount > 0
+                                  ? 'text-[#F0F6FF] font-semibold'
+                                  : 'text-[#96ACD0]'
+                              }`}
+                            >
+                              {preview}
+                            </p>
+                            {unreadCount > 0 && (
+                              <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#38BDF8] text-[#071126] text-[11px] font-bold tabular-nums shrink-0">
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </button>
                     );
@@ -523,7 +724,10 @@ export function App() {
                 <div className="h-16 px-4 border-b border-[#213C73] bg-[#0C1B3B] flex items-center gap-3 shrink-0">
                   <button
                     type="button"
-                    onClick={() => setActiveChatId(null)}
+                    onClick={() => {
+                      stopTypingNow(true);
+                      setActiveChatId(null);
+                    }}
                     className="md:hidden p-2 rounded-xl hover:bg-[#122650] text-[#F0F6FF] cursor-pointer"
                   >
                     <ArrowLeft className="w-5 h-5" />
@@ -533,9 +737,16 @@ export function App() {
                     photoUrl={resolvedPeer.photoUrl}
                     sizeClass="w-10 h-10 text-xs"
                   />
-                  <span className="font-semibold text-sm text-[#F0F6FF] truncate">
-                    {resolvedPeer.name}
-                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-sm text-[#F0F6FF] truncate">
+                      {resolvedPeer.name}
+                    </div>
+                    {isPeerTyping && (
+                      <div className="text-xs font-medium text-[#38BDF8] truncate">
+                        {strings.typingIndicatorLabel}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3">
@@ -552,21 +763,45 @@ export function App() {
                           className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
                         >
                           <div
-                            className={`max-w-[78%] sm:max-w-md px-4 py-2.5 rounded-2xl ${
+                            className={`max-w-[78%] sm:max-w-md px-3.5 py-2.5 rounded-2xl ${
                               isMine
                                 ? 'bg-[#1E40AF] text-[#F0F6FF] rounded-br-sm'
                                 : 'bg-[#132954] text-[#F0F6FF] rounded-bl-sm'
                             }`}
                           >
-                            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                              {msg.text}
-                            </p>
+                            {msg.imageBase64 && (
+                              <button
+                                type="button"
+                                onClick={() => setFullScreenImage(msg.imageBase64)}
+                                className="block w-full overflow-hidden rounded-xl mb-1.5 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#38BDF8]"
+                                aria-label={strings.photoViewerTitle}
+                              >
+                                <img
+                                  src={`data:image/jpeg;base64,${msg.imageBase64}`}
+                                  alt={strings.photoLabel}
+                                  className="max-h-64 w-full object-cover rounded-xl hover:opacity-95 transition-opacity"
+                                />
+                              </button>
+                            )}
+                            {msg.text && (
+                              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words px-0.5">
+                                {msg.text}
+                              </p>
+                            )}
                             <div
-                              className={`text-[11px] mt-1 text-right tabular-nums ${
-                                isMine ? 'text-[#38BDF8]' : 'text-[#96ACD0]'
+                              className={`text-[11px] mt-1 flex items-center justify-end gap-1 tabular-nums ${
+                                isMine ? 'text-[#C8DCFF]' : 'text-[#96ACD0]'
                               }`}
                             >
-                              {formatTime(msg.createdAtMillis)}
+                              <span>{formatTime(msg.createdAtMillis)}</span>
+                              {isMine &&
+                                (msg.status === 'read' ? (
+                                  <CheckCheck className="w-3.5 h-3.5 text-[#38BDF8] shrink-0" />
+                                ) : msg.status === 'delivered' ? (
+                                  <CheckCheck className="w-3.5 h-3.5 text-[#96ACD0] shrink-0" />
+                                ) : (
+                                  <Check className="w-3.5 h-3.5 text-[#96ACD0] shrink-0" />
+                                ))}
                             </div>
                           </div>
                         </div>
@@ -576,21 +811,76 @@ export function App() {
                   <div ref={messagesEndRef} />
                 </div>
 
+                {imageError && (
+                  <div className="px-4 py-2 bg-[#122650] border-t border-red-400/30 text-xs text-red-300">
+                    {imageError}
+                  </div>
+                )}
+
+                {(compressingImage || stagedImageBase64) && (
+                  <div className="px-4 py-2.5 bg-[#122650] border-t border-[#213C73] flex items-center gap-3">
+                    {compressingImage ? (
+                      <>
+                        <div className="w-6 h-6 rounded-full border-2 border-[#38BDF8] border-t-transparent animate-spin shrink-0" />
+                        <span className="text-xs text-[#96ACD0]">
+                          {strings.compressingImageLabel}
+                        </span>
+                      </>
+                    ) : stagedImageBase64 ? (
+                      <>
+                        <img
+                          src={`data:image/jpeg;base64,${stagedImageBase64}`}
+                          alt={strings.photoPreviewLabel}
+                          className="w-12 h-12 rounded-lg object-cover border border-[#213C73] shrink-0"
+                        />
+                        <span className="text-xs text-[#F0F6FF] flex-1 truncate">
+                          {strings.photoPreviewLabel}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setStagedImageBase64(null)}
+                          className="p-1.5 rounded-lg hover:bg-[#173166] text-[#96ACD0] hover:text-[#F0F6FF] cursor-pointer"
+                          aria-label={strings.removeImageLabel}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                )}
+
                 <form
                   onSubmit={handleSendMessage}
-                  className="p-3 sm:p-4 border-t border-[#213C73] bg-[#0C1B3B] flex items-center gap-3 shrink-0"
+                  className="p-3 sm:p-4 border-t border-[#213C73] bg-[#0C1B3B] flex items-center gap-2.5 shrink-0"
                 >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageFileSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={compressingImage}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-11 w-11 rounded-2xl bg-[#122650] hover:bg-[#173166] border border-[#213C73] disabled:opacity-50 text-[#38BDF8] flex items-center justify-center transition-colors shrink-0 cursor-pointer"
+                    aria-label={strings.attachImageLabel}
+                    title={strings.attachImageLabel}
+                  >
+                    <ImageIcon className="w-5 h-5" />
+                  </button>
                   <input
                     type="text"
                     value={draft}
                     maxLength={2000}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => handleDraftChange(e.target.value)}
                     placeholder={strings.messageHint}
                     className="flex-1 bg-[#122650] border border-[#213C73] focus:border-[#38BDF8] rounded-2xl px-4 py-3 text-sm text-[#F0F6FF] placeholder-[#96ACD0] outline-none"
                   />
                   <button
                     type="submit"
-                    disabled={!draft.trim()}
+                    disabled={(!draft.trim() && !stagedImageBase64) || compressingImage}
                     className="h-11 w-11 rounded-2xl bg-[#1D4ED8] hover:bg-[#2563EB] disabled:opacity-50 text-[#F0F6FF] flex items-center justify-center transition-colors shrink-0 cursor-pointer"
                     aria-label={strings.sendLabel}
                   >
@@ -606,7 +896,7 @@ export function App() {
       {/* Profile Modal */}
       {showProfileModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-[#0C1B3B] border border-[#213C73] rounded-3xl p-6 space-y-6">
+          <div className="max-w-md w-full max-h-[90vh] overflow-y-auto bg-[#0C1B3B] border border-[#213C73] rounded-3xl p-6 space-y-5">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-[#F0F6FF]">{strings.profileTitle}</h2>
               <button
@@ -629,6 +919,64 @@ export function App() {
                 <div className="text-sm text-[#38BDF8]">{currentUser.email}</div>
               </div>
             </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleSavePhone(phoneInput);
+              }}
+              className="bg-[#122650] border border-[#213C73] rounded-2xl p-4 space-y-2.5"
+            >
+              <label
+                htmlFor="profile-phone-input"
+                className="block text-xs font-medium text-[#96ACD0]"
+              >
+                {strings.phoneLabel}
+              </label>
+              <p className="text-xs text-[#96ACD0] leading-relaxed">{strings.phonePrivacyHint}</p>
+              {currentUser.phoneHash && !phoneFeedback && (
+                <p className="text-xs font-medium text-[#38BDF8]">{strings.phoneSavedStatus}</p>
+              )}
+              <input
+                id="profile-phone-input"
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => {
+                  setPhoneInput(e.target.value);
+                  if (phoneFeedback) setPhoneFeedback(null);
+                }}
+                placeholder={strings.phonePlaceholder}
+                className="w-full bg-[#0C1B3B] border border-[#213C73] focus:border-[#38BDF8] rounded-xl px-3.5 py-2.5 text-sm text-[#F0F6FF] placeholder-[#96ACD0] outline-none"
+              />
+              {phoneFeedback && (
+                <p
+                  className={`text-xs ${
+                    phoneFeedback.isError ? 'text-red-300' : 'text-[#38BDF8]'
+                  }`}
+                >
+                  {phoneFeedback.text}
+                </p>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={savingPhone || !phoneInput.trim()}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-[#1D4ED8] hover:bg-[#2563EB] disabled:opacity-50 text-xs font-semibold text-[#F0F6FF] transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  {savingPhone ? strings.phoneSavingLabel : strings.phoneSaveLabel}
+                </button>
+                {currentUser.phoneHash && (
+                  <button
+                    type="button"
+                    disabled={savingPhone}
+                    onClick={() => void handleSavePhone('')}
+                    className="py-2.5 px-3 rounded-xl bg-[#0C1B3B] hover:bg-[#173166] border border-[#213C73] disabled:opacity-50 text-xs font-semibold text-[#96ACD0] hover:text-[#F0F6FF] transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    {strings.phoneRemoveLabel}
+                  </button>
+                )}
+              </div>
+            </form>
 
             <div className="bg-[#122650] border border-[#213C73] rounded-2xl p-4 space-y-2.5">
               <div className="text-xs font-medium text-[#96ACD0]">{strings.languageLabel}</div>
@@ -660,6 +1008,38 @@ export function App() {
               <LogOut className="w-4 h-4" />
               <span>{strings.signOutLabel}</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Full-Screen Image Viewer */}
+      {fullScreenImage && (
+        <div
+          className="fixed inset-0 z-50 bg-[#050B18]/95 backdrop-blur-sm flex flex-col p-4"
+          onClick={() => setFullScreenImage(null)}
+        >
+          <div className="flex items-center justify-between px-2 py-2">
+            <span className="text-sm font-semibold text-[#F0F6FF]">
+              {strings.photoViewerTitle}
+            </span>
+            <button
+              type="button"
+              onClick={() => setFullScreenImage(null)}
+              className="p-2.5 rounded-full bg-[#122650] hover:bg-[#173166] border border-[#213C73] text-[#F0F6FF] cursor-pointer"
+              aria-label={strings.closeLabel}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div
+            className="flex-1 flex items-center justify-center overflow-hidden p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={`data:image/jpeg;base64,${fullScreenImage}`}
+              alt={strings.photoViewerTitle}
+              className="max-h-full max-w-full object-contain rounded-xl"
+            />
           </div>
         </div>
       )}

@@ -49,6 +49,11 @@ class AuthRepository(
         } else {
             preferredLanguage
         }
+        val existingPhoneHash = if (existingUser.exists()) {
+            existingUser.getString("phoneHash").orEmpty()
+        } else {
+            ""
+        }
 
         val batch = db.batch()
         if (existingUser.exists()) {
@@ -59,6 +64,7 @@ class AuthRepository(
                     "email" to email,
                     "photoUrl" to photoUrl,
                     "preferredLanguage" to resolvedLanguage.code,
+                    "phoneHash" to existingPhoneHash,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             )
@@ -71,6 +77,7 @@ class AuthRepository(
                     "email" to email,
                     "photoUrl" to photoUrl,
                     "preferredLanguage" to resolvedLanguage.code,
+                    "phoneHash" to "",
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
@@ -102,6 +109,19 @@ class AuthRepository(
             )
         )
 
+        if (existingPhoneHash.length == 64) {
+            val phoneLookupRef = db.collection("phone_lookup").document(existingPhoneHash)
+            batch.set(
+                phoneLookupRef,
+                mapOf(
+                    "uid" to uid,
+                    "displayName" to displayName,
+                    "photoUrl" to photoUrl,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+        }
+
         batch.commit().await()
 
         return UserProfile(
@@ -109,7 +129,8 @@ class AuthRepository(
             displayName = displayName,
             email = email,
             photoUrl = photoUrl,
-            preferredLanguage = resolvedLanguage
+            preferredLanguage = resolvedLanguage,
+            phoneHash = existingPhoneHash
         )
     }
 
@@ -121,7 +142,8 @@ class AuthRepository(
             displayName = snapshot.getString("displayName").orEmpty(),
             email = snapshot.getString("email").orEmpty(),
             photoUrl = snapshot.getString("photoUrl").orEmpty(),
-            preferredLanguage = AppLanguage.fromCode(snapshot.getString("preferredLanguage"))
+            preferredLanguage = AppLanguage.fromCode(snapshot.getString("preferredLanguage")),
+            phoneHash = snapshot.getString("phoneHash").orEmpty()
         )
     }
 
@@ -132,6 +154,66 @@ class AuthRepository(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
         ).await()
+    }
+
+    suspend fun updatePhoneNumber(
+        user: UserProfile,
+        rawPhone: String,
+        invalidPhoneError: String,
+        duplicatePhoneError: String
+    ): String {
+        val trimmed = rawPhone.trim()
+        val oldHash = user.phoneHash
+
+        if (trimmed.isEmpty()) {
+            val batch = db.batch()
+            if (oldHash.length == 64) {
+                batch.delete(db.collection("phone_lookup").document(oldHash))
+            }
+            batch.update(
+                db.collection("users").document(user.uid),
+                mapOf(
+                    "phoneHash" to "",
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            batch.commit().await()
+            return ""
+        }
+
+        val normalized = com.lukuman.freechat.util.PhoneUtils.normalizeNigerianPhone(trimmed)
+            ?: throw IllegalArgumentException(invalidPhoneError)
+        val newHash = sha256Hex(normalized)
+
+        if (newHash != oldHash) {
+            val existingLookup = db.collection("phone_lookup").document(newHash).get().await()
+            if (existingLookup.exists() && existingLookup.getString("uid") != user.uid) {
+                throw IllegalStateException(duplicatePhoneError)
+            }
+        }
+
+        val batch = db.batch()
+        if (oldHash.length == 64 && oldHash != newHash) {
+            batch.delete(db.collection("phone_lookup").document(oldHash))
+        }
+        batch.set(
+            db.collection("phone_lookup").document(newHash),
+            mapOf(
+                "uid" to user.uid,
+                "displayName" to user.displayName.take(100).ifBlank { "Lukuman User" },
+                "photoUrl" to user.photoUrl.take(500),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        )
+        batch.update(
+            db.collection("users").document(user.uid),
+            mapOf(
+                "phoneHash" to newHash,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        )
+        batch.commit().await()
+        return newHash
     }
 
     fun signOut(context: Context) {

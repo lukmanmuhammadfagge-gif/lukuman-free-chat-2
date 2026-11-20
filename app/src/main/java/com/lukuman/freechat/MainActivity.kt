@@ -165,7 +165,16 @@ fun LukumanFreeChatRoot(viewModel: ChatViewModel = viewModel()) {
                     ?: state.activePeerName.ifBlank { strings.appName },
                 peerPhoto = activeThread?.peerPhoto(currentUser.uid)?.ifBlank { state.activePeerPhoto }
                     ?: state.activePeerPhoto,
+                isPeerTyping = activeThread?.isPeerTyping(currentUser.uid) == true,
                 messages = state.activeMessages,
+                isCompressingImage = state.isCompressingImage,
+                stagedImageBase64 = state.stagedImageBase64,
+                errorMessage = state.errorMessage,
+                onDraftChange = viewModel::onDraftChanged,
+                onPickImageUri = { uri ->
+                    viewModel.pickAndCompressImage(context, uri, strings.imageErrorLabel)
+                },
+                onClearStagedImage = viewModel::clearStagedImage,
                 onSendMessage = viewModel::sendMessage,
                 onBack = {
                     viewModel.closeChat()
@@ -179,12 +188,21 @@ fun LukumanFreeChatRoot(viewModel: ChatViewModel = viewModel()) {
                 strings = strings,
                 user = currentUser,
                 currentLanguage = state.language,
+                isSavingPhone = state.isSavingPhone,
+                phoneStatusMessage = state.phoneStatusMessage,
+                phoneStatusIsError = state.phoneStatusIsError,
                 onSelectLanguage = viewModel::setLanguage,
+                onSavePhone = { rawPhone -> viewModel.savePhoneNumber(rawPhone, strings) },
+                onRemovePhone = { viewModel.savePhoneNumber("", strings) },
+                onClearPhoneFeedback = viewModel::clearPhoneFeedback,
                 onSignOut = {
                     currentRoute = AppRoute.CHATS
                     viewModel.signOut(context)
                 },
-                onBack = { currentRoute = AppRoute.CHATS }
+                onBack = {
+                    viewModel.clearPhoneFeedback()
+                    currentRoute = AppRoute.CHATS
+                }
             )
         }
     }

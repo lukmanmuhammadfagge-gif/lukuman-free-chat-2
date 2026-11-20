@@ -33,6 +33,12 @@
           "minLength": 2,
           "maxLength": 2
         },
+        "phoneHash": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 64,
+          "pattern": "^(|[a-f0-9]{64})$"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -114,6 +120,34 @@
       },
       "required": ["uid", "displayName", "photoUrl", "updatedAt"]
     },
+    "PhoneLookup": {
+      "title": "PhoneLookup",
+      "description": "Exact SHA-256 Nigerian (+234) phone hash lookup document mapping a hashed phone number to a user UID and public display info without storing raw phone numbers.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "photoUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "photoUrl", "updatedAt"]
+    },
     "ChatThread": {
       "title": "ChatThread",
       "description": "One-to-one chat thread between two authenticated users.",
@@ -150,6 +184,14 @@
         "lastMessageAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "unreadCounts": {
+          "type": "object",
+          "description": "Map of participant UID to unread message count."
+        },
+        "typingUsers": {
+          "type": "object",
+          "description": "Map of participant UID to boolean typing flag."
         },
         "createdAt": {
           "type": "string",
@@ -201,15 +243,34 @@
         },
         "text": {
           "type": "string",
-          "minLength": 1,
+          "minLength": 0,
           "maxLength": 2000
+        },
+        "imageBase64": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 220000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["sent", "delivered", "read"],
+          "minLength": 4,
+          "maxLength": 9
         },
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "deliveredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "readAt": {
+          "type": "string",
+          "format": "date-time"
         }
       },
-      "required": ["id", "chatId", "senderId", "participantIds", "text", "createdAt"]
+      "required": ["id", "chatId", "senderId", "participantIds", "text", "imageBase64", "createdAt"]
     }
   },
   "firestore": {
@@ -224,6 +285,10 @@
     "/email_lookup/{emailHash}": {
       "schema": { "$ref": "#/entities/EmailLookup" },
       "description": "Exact-match SHA-256 email hash lookup documents for finding users by email."
+    },
+    "/phone_lookup/{phoneHash}": {
+      "schema": { "$ref": "#/entities/PhoneLookup" },
+      "description": "Exact-match SHA-256 phone hash lookup documents for finding users by Nigerian (+234) phone number without storing raw phone numbers."
     },
     "/chats/{chatId}": {
       "schema": { "$ref": "#/entities/ChatThread" },

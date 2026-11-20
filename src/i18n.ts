@@ -35,6 +35,24 @@ export interface WebStrings {
   downloadZip: string;
   downloadingZip: string;
   closeLabel: string;
+  attachImageLabel: string;
+  photoLabel: string;
+  photoPreviewLabel: string;
+  photoViewerTitle: string;
+  compressingImageLabel: string;
+  imageErrorLabel: string;
+  removeImageLabel: string;
+  phoneLabel: string;
+  phonePlaceholder: string;
+  phonePrivacyHint: string;
+  phoneSaveLabel: string;
+  phoneSavingLabel: string;
+  phoneRemoveLabel: string;
+  phoneSavedStatus: string;
+  phoneRemovedStatus: string;
+  phoneInvalidError: string;
+  phoneAlreadyTakenError: string;
+  typingIndicatorLabel: string;
 }
 
 export const STRINGS: Record<AppLanguage, WebStrings> = {
@@ -52,13 +70,13 @@ export const STRINGS: Record<AppLanguage, WebStrings> = {
     androidProjectTitle: 'Aikin Android (Kotlin & Compose)',
     liveChatTab: 'Hira Kai Tsaye',
     androidCodeTab: 'Lambar Android',
-    searchPlaceholder: 'Nemo da suna ko adireshin imel...',
+    searchPlaceholder: 'Nemo da suna, imel, ko lamba (+234)...',
     searchButton: 'Nema',
-    searchPrompt: 'Shigar da suna ko cikakken imel don fara sabuwar hira.',
+    searchPrompt: 'Shigar da suna (ko wani ɓangare), imel, ko cikakkiyar lambar waya (+234) don fara hira.',
     noChatsTitle: 'Babu tattaunawa tukuna',
-    noChatsBody: 'Nemo wani da suna ko imel don fara sabuwar tattaunawa.',
+    noChatsBody: 'Nemo wani da suna, imel, ko lambar waya don fara sabuwar tattaunawa.',
     startNewChat: 'Fara Hira',
-    noUsersFound: 'Ba a sami kowa mai wannan suna ko imel ba.',
+    noUsersFound: 'Ba a sami kowa mai wannan suna, imel, ko lambar waya ba.',
     youPrefix: 'Kai: ',
     newChatPlaceholder: 'Fara sabuwar tattaunawa',
     messageHint: 'Rubuta saƙo...',
@@ -74,6 +92,26 @@ export const STRINGS: Record<AppLanguage, WebStrings> = {
     downloadZip: 'Sauke Aikin Android (.zip)',
     downloadingZip: 'Ana shirya ZIP...',
     closeLabel: 'Rufe',
+    attachImageLabel: 'Zaɓi Hoto',
+    photoLabel: 'Hoto',
+    photoPreviewLabel: 'Hoto a shirye don aikawa',
+    photoViewerTitle: 'Duba Hoto',
+    compressingImageLabel: 'Ana shirya hoto...',
+    imageErrorLabel: 'Ba a iya sarrafa wannan hoton ba.',
+    removeImageLabel: 'Cire hoto',
+    phoneLabel: 'Lambar Waya (Na Zaɓi, +234)',
+    phonePlaceholder: '+234 801 234 5678',
+    phonePrivacyHint:
+      'Ana adana SHA-256 hash ne kawai don bincike; ba a taɓa adana ainihin lambar ba.',
+    phoneSaveLabel: 'Adana Lamba',
+    phoneSavingLabel: 'Ana adanawa...',
+    phoneRemoveLabel: 'Cire',
+    phoneSavedStatus: 'An adana hash na lambar Najeriya (+234) don bincike.',
+    phoneRemovedStatus: 'An cire lambar waya daga bincike.',
+    phoneInvalidError:
+      'Shigar da ingantacciyar lambar Najeriya, misali +2348012345678 ko 08012345678.',
+    phoneAlreadyTakenError: 'Wannan lambar wayar tana haɗe da wani asusu.',
+    typingIndicatorLabel: 'yana rubutu...',
   },
   en: {
     appName: 'Lukuman Free Chat',
@@ -89,11 +127,12 @@ export const STRINGS: Record<AppLanguage, WebStrings> = {
     androidProjectTitle: 'Android Project (Kotlin & Compose)',
     liveChatTab: 'Live Chat',
     androidCodeTab: 'Android Source',
-    searchPlaceholder: 'Search by name or email...',
+    searchPlaceholder: 'Search name, email, or +234 phone...',
     searchButton: 'Search',
-    searchPrompt: 'Enter a display name or full email address to start a chat.',
+    searchPrompt:
+      'Enter a name (even partial), full email, or +234 phone number to start a chat.',
     noChatsTitle: 'No conversations yet',
-    noChatsBody: 'Find someone by name or email to start a one-to-one chat.',
+    noChatsBody: 'Find someone by name, email, or phone number to start a one-to-one chat.',
     startNewChat: 'Start Chat',
     noUsersFound: 'No matching users found.',
     youPrefix: 'You: ',
@@ -111,5 +150,24 @@ export const STRINGS: Record<AppLanguage, WebStrings> = {
     downloadZip: 'Download Android Project (.zip)',
     downloadingZip: 'Preparing ZIP...',
     closeLabel: 'Close',
+    attachImageLabel: 'Pick Photo',
+    photoLabel: 'Photo',
+    photoPreviewLabel: 'Photo ready to send',
+    photoViewerTitle: 'Photo',
+    compressingImageLabel: 'Preparing photo...',
+    imageErrorLabel: 'Could not process this image.',
+    removeImageLabel: 'Remove photo',
+    phoneLabel: 'Phone Number (Optional, +234)',
+    phonePlaceholder: '+234 801 234 5678',
+    phonePrivacyHint:
+      'Only a SHA-256 hash is stored for search; your raw number is never saved.',
+    phoneSaveLabel: 'Save Number',
+    phoneSavingLabel: 'Saving...',
+    phoneRemoveLabel: 'Remove',
+    phoneSavedStatus: 'Nigerian (+234) phone hash saved for search.',
+    phoneRemovedStatus: 'Phone number removed from search.',
+    phoneInvalidError: 'Enter a valid Nigerian number, e.g. +2348012345678 or 08012345678.',
+    phoneAlreadyTakenError: 'This phone number is already linked to another account.',
+    typingIndicatorLabel: 'typing...',
   },
 };

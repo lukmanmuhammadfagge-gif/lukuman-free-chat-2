@@ -31,20 +31,21 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    function isValidEmailHash(hash) {
+    function isValidSha256Hash(hash) {
       return hash is string && hash.size() == 64 && hash.matches('^[a-f0-9]{64}$');
     }
 
     // --- Validation Blueprints ---
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll(['uid', 'displayName', 'email', 'photoUrl', 'preferredLanguage', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoUrl', 'preferredLanguage', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoUrl', 'preferredLanguage', 'phoneHash', 'createdAt', 'updatedAt'])
         && isValidId(data.uid)
         && data.uid == userId
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
         && data.photoUrl is string && data.photoUrl.size() <= 500
         && data.preferredLanguage is string && data.preferredLanguage in ['ha', 'en']
+        && (!('phoneHash' in data) || (data.phoneHash is string && (data.phoneHash == '' || isValidSha256Hash(data.phoneHash))))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -57,12 +58,12 @@ service cloud.firestore {
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
         && data.displayNameLower is string && data.displayNameLower.size() >= 1 && data.displayNameLower.size() <= 100
         && data.photoUrl is string && data.photoUrl.size() <= 500
-        && isValidEmailHash(data.emailHash)
+        && isValidSha256Hash(data.emailHash)
         && data.searchable is bool
         && data.updatedAt is timestamp;
     }
 
-    function isValidEmailLookup(data) {
+    function isValidLookupDoc(data) {
       return data.keys().hasAll(['uid', 'displayName', 'photoUrl', 'updatedAt'])
         && data.keys().hasOnly(['uid', 'displayName', 'photoUrl', 'updatedAt'])
         && isValidId(data.uid)
@@ -81,6 +82,89 @@ service cloud.firestore {
         && chatId == (pair[0] + '_' + pair[1]);
     }
 
+    function isValidParticipantBoolMap(m, pair) {
+      return m is map
+        && m.keys().hasOnly(pair)
+        && (!(pair[0] in m) || m[pair[0]] is bool)
+        && (!(pair[1] in m) || m[pair[1]] is bool);
+    }
+
+    function isValidParticipantIntMap(m, pair) {
+      return m is map
+        && m.keys().hasOnly(pair)
+        && (!(pair[0] in m) || (m[pair[0]] is int && m[pair[0]] >= 0 && m[pair[0]] <= 100000))
+        && (!(pair[1] in m) || (m[pair[1]] is int && m[pair[1]] >= 0 && m[pair[1]] <= 100000));
+    }
+
+    function isValidUnreadIncrement(existingData, incomingData, callerUid, peerUid) {
+      return ('unreadCounts' in incomingData)
+        && (
+          !('unreadCounts' in existingData)
+          || !(callerUid in existingData.unreadCounts)
+          || !(callerUid in incomingData.unreadCounts)
+          || incomingData.unreadCounts[callerUid] == existingData.unreadCounts[callerUid]
+        )
+        && (
+          (
+            (!('unreadCounts' in existingData) || !(peerUid in existingData.unreadCounts))
+            && (peerUid in incomingData.unreadCounts)
+            && incomingData.unreadCounts[peerUid] == 1
+          )
+          || (
+            ('unreadCounts' in existingData)
+            && (peerUid in existingData.unreadCounts)
+            && (peerUid in incomingData.unreadCounts)
+            && incomingData.unreadCounts[peerUid] == existingData.unreadCounts[peerUid] + 1
+          )
+        );
+    }
+
+    function isValidClearUnread(existingData, incomingData, callerUid, peerUid) {
+      return ('unreadCounts' in incomingData)
+        && (callerUid in incomingData.unreadCounts)
+        && incomingData.unreadCounts[callerUid] == 0
+        && (
+          !('unreadCounts' in existingData)
+          || !(peerUid in existingData.unreadCounts)
+          || (
+            (peerUid in incomingData.unreadCounts)
+            && incomingData.unreadCounts[peerUid] == existingData.unreadCounts[peerUid]
+          )
+        );
+    }
+
+    function isValidTypingUpdate(existingData, incomingData, callerUid, peerUid) {
+      return ('typingUsers' in incomingData)
+        && (callerUid in incomingData.typingUsers)
+        && incomingData.typingUsers[callerUid] is bool
+        && (
+          !('typingUsers' in existingData)
+          || !(peerUid in existingData.typingUsers)
+          || (
+            (peerUid in incomingData.typingUsers)
+            && incomingData.typingUsers[peerUid] == existingData.typingUsers[peerUid]
+          )
+        );
+    }
+
+    function isValidTypingClearOnSend(existingData, incomingData, callerUid, peerUid) {
+      return !('typingUsers' in incomingData)
+        || (
+          (
+            !(callerUid in incomingData.typingUsers)
+            || incomingData.typingUsers[callerUid] == false
+          )
+          && (
+            !('typingUsers' in existingData)
+            || !(peerUid in existingData.typingUsers)
+            || (
+              (peerUid in incomingData.typingUsers)
+              && incomingData.typingUsers[peerUid] == existingData.typingUsers[peerUid]
+            )
+          )
+        );
+    }
+
     function isValidChatThread(data, chatId) {
       return data.keys().hasAll([
           'chatId', 'participantIds', 'participantNames', 'participantPhotos',
@@ -88,7 +172,8 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'chatId', 'participantIds', 'participantNames', 'participantPhotos',
-          'lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'createdAt', 'updatedAt'
+          'lastMessageText', 'lastMessageSenderId', 'lastMessageAt',
+          'unreadCounts', 'typingUsers', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.chatId)
         && data.chatId == chatId
@@ -112,19 +197,26 @@ service cloud.firestore {
         && data.lastMessageText is string && data.lastMessageText.size() <= 2000
         && data.lastMessageSenderId is string && data.lastMessageSenderId.size() <= 128
         && data.lastMessageAt is timestamp
+        && (!('unreadCounts' in data) || isValidParticipantIntMap(data.unreadCounts, data.participantIds))
+        && (!('typingUsers' in data) || isValidParticipantBoolMap(data.typingUsers, data.participantIds))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
     function isValidChatMessage(data, chatId, messageId) {
-      return data.keys().hasAll(['id', 'chatId', 'senderId', 'participantIds', 'text', 'createdAt'])
-        && data.keys().hasOnly(['id', 'chatId', 'senderId', 'participantIds', 'text', 'createdAt'])
+      return data.keys().hasAll(['id', 'chatId', 'senderId', 'participantIds', 'text', 'imageBase64', 'createdAt'])
+        && data.keys().hasOnly(['id', 'chatId', 'senderId', 'participantIds', 'text', 'imageBase64', 'status', 'createdAt', 'deliveredAt', 'readAt'])
         && isValidId(data.id) && data.id == messageId
         && isValidId(data.chatId) && data.chatId == chatId
-        && isValidId(data.senderId) && data.senderId == request.auth.uid
+        && isValidId(data.senderId)
         && isValidParticipantPair(data.participantIds, chatId)
-        && request.auth.uid in data.participantIds
-        && data.text is string && data.text.size() >= 1 && data.text.size() <= 2000
+        && data.senderId in data.participantIds
+        && data.text is string && data.text.size() <= 2000
+        && data.imageBase64 is string && data.imageBase64.size() <= 220000
+        && (data.text.size() >= 1 || data.imageBase64.size() >= 20)
+        && (!('status' in data) || (data.status is string && data.status in ['sent', 'delivered', 'read']))
+        && (!('deliveredAt' in data) || data.deliveredAt is timestamp)
+        && (!('readAt' in data) || data.readAt is timestamp)
         && data.createdAt is timestamp;
     }
 
@@ -145,7 +237,7 @@ service cloud.firestore {
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'preferredLanguage', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'preferredLanguage', 'phoneHash', 'updatedAt']);
       allow delete: if false;
     }
 
@@ -170,20 +262,40 @@ service cloud.firestore {
 
     // --- /email_lookup/{emailHash} (Exact Email Hash Lookup, No Listing) ---
     match /email_lookup/{emailHash} {
-      allow get: if isSignedIn() && isValidEmailHash(emailHash);
+      allow get: if isSignedIn() && isValidSha256Hash(emailHash);
       allow list: if false;
       allow create: if isVerifiedUser()
-        && isValidEmailHash(emailHash)
-        && isValidEmailLookup(incoming())
+        && isValidSha256Hash(emailHash)
+        && isValidLookupDoc(incoming())
         && incoming().updatedAt == request.time;
       allow update: if isVerifiedUser()
-        && isValidEmailHash(emailHash)
+        && isValidSha256Hash(emailHash)
         && existing().uid == request.auth.uid
-        && isValidEmailLookup(incoming())
+        && isValidLookupDoc(incoming())
         && incoming().uid == existing().uid
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'updatedAt']);
       allow delete: if false;
+    }
+
+    // --- /phone_lookup/{phoneHash} (Exact Nigerian Phone Hash Lookup, No Listing, No Raw Phone) ---
+    match /phone_lookup/{phoneHash} {
+      allow get: if isSignedIn() && isValidSha256Hash(phoneHash);
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidSha256Hash(phoneHash)
+        && isValidLookupDoc(incoming())
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidSha256Hash(phoneHash)
+        && existing().uid == request.auth.uid
+        && isValidLookupDoc(incoming())
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'updatedAt']);
+      allow delete: if isVerifiedUser()
+        && isValidSha256Hash(phoneHash)
+        && existing().uid == request.auth.uid;
     }
 
     // --- /chats/{chatId} (Strict 1:1 Participant-Only Chats) ---
@@ -211,11 +323,59 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action: SendMessageSummaryUpdate
+          // Action: SendMessageSummaryUpdate (also atomically increments peer unread count and clears sender typing flag)
           (
-            incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastMessageText', 'lastMessageSenderId', 'lastMessageAt',
+              'unreadCounts', 'typingUsers', 'updatedAt'
+            ])
             && incoming().lastMessageSenderId == request.auth.uid
             && incoming().lastMessageAt == request.time
+            && (
+              (
+                request.auth.uid == existing().participantIds[0]
+                && isValidUnreadIncrement(existing(), incoming(), existing().participantIds[0], existing().participantIds[1])
+                && isValidTypingClearOnSend(existing(), incoming(), existing().participantIds[0], existing().participantIds[1])
+              )
+              ||
+              (
+                request.auth.uid == existing().participantIds[1]
+                && isValidUnreadIncrement(existing(), incoming(), existing().participantIds[1], existing().participantIds[0])
+                && isValidTypingClearOnSend(existing(), incoming(), existing().participantIds[1], existing().participantIds[0])
+              )
+            )
+          )
+          ||
+          // Action: UpdateTypingFlag (caller can only set their own typing flag)
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['typingUsers', 'updatedAt'])
+            && (
+              (
+                request.auth.uid == existing().participantIds[0]
+                && isValidTypingUpdate(existing(), incoming(), existing().participantIds[0], existing().participantIds[1])
+              )
+              ||
+              (
+                request.auth.uid == existing().participantIds[1]
+                && isValidTypingUpdate(existing(), incoming(), existing().participantIds[1], existing().participantIds[0])
+              )
+            )
+          )
+          ||
+          // Action: ClearUnreadCount (caller can only reset their own unread count to 0)
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['unreadCounts', 'updatedAt'])
+            && (
+              (
+                request.auth.uid == existing().participantIds[0]
+                && isValidClearUnread(existing(), incoming(), existing().participantIds[0], existing().participantIds[1])
+              )
+              ||
+              (
+                request.auth.uid == existing().participantIds[1]
+                && isValidClearUnread(existing(), incoming(), existing().participantIds[1], existing().participantIds[0])
+              )
+            )
           )
           ||
           // Action: SyncParticipantProfile (can only modify caller's own entry)
@@ -250,11 +410,51 @@ service cloud.firestore {
           && isValidId(chatId)
           && isValidId(messageId)
           && isValidChatMessage(incoming(), chatId, messageId)
+          && incoming().senderId == request.auth.uid
+          && request.auth.uid in incoming().participantIds
+          && ('status' in incoming())
+          && incoming().status == 'sent'
+          && !('deliveredAt' in incoming())
+          && !('readAt' in incoming())
           && incoming().createdAt == request.time
           && exists(/databases/$(database)/documents/chats/$(chatId))
           && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participantIds
           && incoming().participantIds == get(/databases/$(database)/documents/chats/$(chatId)).data.participantIds;
-        allow update, delete: if false;
+        allow update: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && isValidChatMessage(incoming(), chatId, messageId)
+          && request.auth.uid in existing().participantIds
+          && existing().senderId != request.auth.uid
+          && incoming().id == existing().id
+          && incoming().chatId == existing().chatId
+          && incoming().senderId == existing().senderId
+          && incoming().participantIds == existing().participantIds
+          && incoming().text == existing().text
+          && incoming().imageBase64 == existing().imageBase64
+          && incoming().createdAt == existing().createdAt
+          && (
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'deliveredAt'])
+              && incoming().status == 'delivered'
+              && (!('status' in existing()) || existing().status == 'sent')
+              && ('deliveredAt' in incoming())
+              && incoming().deliveredAt == request.time
+            )
+            ||
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'deliveredAt', 'readAt'])
+              && incoming().status == 'read'
+              && (!('status' in existing()) || existing().status in ['sent', 'delivered'])
+              && ('readAt' in incoming())
+              && incoming().readAt == request.time
+              && (
+                (!('deliveredAt' in existing()) && ('deliveredAt' in incoming()) && incoming().deliveredAt == request.time)
+                || (('deliveredAt' in existing()) && incoming().deliveredAt == existing().deliveredAt)
+              )
+            )
+          );
+        allow delete: if false;
       }
     }
   }

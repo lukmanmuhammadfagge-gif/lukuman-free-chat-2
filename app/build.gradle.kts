@@ -17,7 +17,20 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("lukuman-debug.keystore")
+            storePassword = "android"
+            keyAlias = "lukumandebug"
+            keyPassword = "android"
+            storeType = "PKCS12"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

@@ -26,14 +26,13 @@ Before running the app with your own Firebase project (or signing in with Google
    - Click **Add app** -> choose the **Android** icon.
    - Enter Android package name: `com.lukuman.freechat`
    - Enter App nickname: `Lukuman Free Chat`
-   - Add your **Debug signing certificate SHA-1** (required for Google Sign-In). You can obtain it locally by running:
-     ```bash
-     ./gradlew signingReport
-     ```
-     or on Linux/macOS:
-     ```bash
-     keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android
-     ```
+   - Add the **Debug signing certificate SHA-1** (and optionally **SHA-256**) from `lukuman-debug.keystore` in the repository root (required for Google Sign-In):
+     - **SHA-1**: `3B:56:10:11:F1:7D:1C:EC:0E:D2:9E:2C:B3:00:04:4E:4B:C8:09:BA`
+     - **SHA-256**: `2B:79:EB:4B:51:CB:D9:17:AC:70:D9:FD:A2:37:2B:64:C4:81:B9:79:19:26:A5:25:0F:CB:16:B5:01:F2:2E:0E`
+     - Or inspect locally / in CI logs via:
+       ```bash
+       keytool -list -v -keystore lukuman-debug.keystore -alias lukumandebug -storepass android -keypass android -storetype PKCS12
+       ```
    - Click **Register app**.
 3. **Download `google-services.json`**:
    - Click **Download google-services.json**.
@@ -59,13 +58,13 @@ chmod +x gradlew
 ./gradlew :app:assembleDebug
 ```
 
-The generated APK will be output to:
+The generated APK is signed with `lukuman-debug.keystore` and output to:
 `app/build/outputs/apk/debug/app-debug.apk`
 
 ### GitHub Actions (`.github/workflows/build-apk.yml`)
 - Push to `main` or `master` (or trigger **Build Android Debug APK** manually via `workflow_dispatch`).
-- Optionally store the contents of `app/google-services.json` in a GitHub Repository Secret named `GOOGLE_SERVICES_JSON` so CI builds your APK wired directly to your live Firebase project.
-- Download `lukuman-free-chat-debug-apk` from the workflow **Artifacts** section.
+- Store the contents of `app/google-services.json` in a GitHub Repository Secret named `GOOGLE_SERVICES_JSON` so CI builds your APK wired directly to your live Firebase project.
+- The workflow prints the `lukuman-debug.keystore` SHA-1 and SHA-256 in the logs, uploads `Lukuman-Free-Chat.apk` as an artifact, and publishes a **GitHub Release** with a direct download link for `Lukuman-Free-Chat.apk`.
 
 ---
 

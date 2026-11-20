@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Assemble Debug APK
@@ -21,6 +24,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Print debug keystore SHA-1 and SHA-256
+        run: |
+          keytool -list -v \
+            -keystore lukuman-debug.keystore \
+            -alias lukumandebug \
+            -storepass android \
+            -keypass android \
+            -storetype PKCS12
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -79,9 +91,21 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
+      - name: Rename Debug APK for Release
+        run: cp app/build/outputs/apk/debug/app-debug.apk Lukuman-Free-Chat.apk
+
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lukuman-free-chat-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Lukuman-Free-Chat
+          path: Lukuman-Free-Chat.apk
           retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', github.run_number) }}
+          name: Lukuman Free Chat (Build #${{ github.run_number }})
+          make_latest: true
+          files: Lukuman-Free-Chat.apk
